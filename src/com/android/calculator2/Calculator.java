@@ -17,123 +17,201 @@
 package com.android.calculator2;
 
 import android.app.Activity;
+import android.content.res.Resources;
+import android.content.res.TypedArray;
 import android.os.Bundle;
+import android.os.Parcelable;
+import android.support.v4.view.PagerAdapter;
+import android.support.v4.view.ViewPager;
 import android.util.Log;
-import android.util.Config;
-import android.util.TypedValue;
-import android.view.Display;
+import android.view.KeyEvent;
+import android.view.LayoutInflater;
 import android.view.Menu;
 import android.view.MenuItem;
 import android.view.View;
-import android.view.KeyEvent;
-import android.widget.Button;
-import android.widget.TextView;
+import android.view.View.OnClickListener;
+import android.view.ViewConfiguration;
+import android.view.ViewGroup;
+import android.view.WindowManager;
+import android.widget.PopupMenu;
+import android.widget.PopupMenu.OnMenuItemClickListener;
 
-public class Calculator extends Activity {
+public class Calculator extends Activity implements PanelSwitcher.Listener, Logic.Listener,
+        OnClickListener, OnMenuItemClickListener {
     EventListener mListener = new EventListener();
     private CalculatorDisplay mDisplay;
     private Persist mPersist;
     private History mHistory;
     private Logic mLogic;
-    private PanelSwitcher mPanelSwitcher;
-
-    private static final int CMD_CLEAR_HISTORY  = 1;
-    private static final int CMD_BASIC_PANEL    = 2;
-    private static final int CMD_ADVANCED_PANEL = 3;
-
-    private static final int HVGA_WIDTH_PIXELS  = 320;
+    private ViewPager mPager;
+    private View mClearButton;
+    private View mBackspaceButton;
+    private View mOverflowMenuButton;
 
     static final int BASIC_PANEL    = 0;
     static final int ADVANCED_PANEL = 1;
 
     private static final String LOG_TAG = "Calculator";
     private static final boolean DEBUG  = false;
-    private static final boolean LOG_ENABLED = DEBUG ? Config.LOGD : Config.LOGV;
+    private static final boolean LOG_ENABLED = false;
     private static final String STATE_CURRENT_VIEW = "state-current-view";
 
     @Override
     public void onCreate(Bundle state) {
         super.onCreate(state);
 
+        // Disable IME for this application
+        getWindow().setFlags(WindowManager.LayoutParams.FLAG_ALT_FOCUSABLE_IM,
+                WindowManager.LayoutParams.FLAG_ALT_FOCUSABLE_IM);
+
         setContentView(R.layout.main);
+        mPager = (ViewPager) findViewById(R.id.panelswitch);
+        if (mPager != null) {
+            mPager.setAdapter(new PageAdapter(mPager));
+        } else {
+            // Single page UI
+            final TypedArray buttons = getResources().obtainTypedArray(R.array.buttons);
+            for (int i = 0; i < buttons.length(); i++) {
+                setOnClickListener(null, buttons.getResourceId(i, 0));
+            }
+            buttons.recycle();
+        }
+
+        if (mClearButton == null) {
+            mClearButton = findViewById(R.id.clear);
+            mClearButton.setOnClickListener(mListener);
+            mClearButton.setOnLongClickListener(mListener);
+        }
+        if (mBackspaceButton == null) {
+            mBackspaceButton = findViewById(R.id.del);
+            mBackspaceButton.setOnClickListener(mListener);
+            mBackspaceButton.setOnLongClickListener(mListener);
+        }
 
         mPersist = new Persist(this);
+        mPersist.load();
+
         mHistory = mPersist.history;
 
         mDisplay = (CalculatorDisplay) findViewById(R.id.display);
 
-        mLogic = new Logic(this, mHistory, mDisplay, (Button) findViewById(R.id.equal));
+        mLogic = new Logic(this, mHistory, mDisplay);
+        mLogic.setListener(this);
+
+        mLogic.setDeleteMode(mPersist.getDeleteMode());
+        mLogic.setLineLength(mDisplay.getMaxDigits());
+
         HistoryAdapter historyAdapter = new HistoryAdapter(this, mHistory, mLogic);
         mHistory.setObserver(historyAdapter);
 
-        mPanelSwitcher = (PanelSwitcher) findViewById(R.id.panelswitch);
-        mPanelSwitcher.setCurrentIndex(state==null ? 0 : state.getInt(STATE_CURRENT_VIEW, 0));
+        if (mPager != null) {
+            mPager.setCurrentItem(state == null ? 0 : state.getInt(STATE_CURRENT_VIEW, 0));
+        }
 
-        mListener.setHandler(mLogic, mPanelSwitcher);
-
+        mListener.setHandler(mLogic, mPager);
         mDisplay.setOnKeyListener(mListener);
 
-        View view;
-        if ((view = findViewById(R.id.del)) != null) {
-//            view.setOnClickListener(mListener);
-            view.setOnLongClickListener(mListener);
+        if (!ViewConfiguration.get(this).hasPermanentMenuKey()) {
+            createFakeMenu();
         }
-        /*
-        if ((view = findViewById(R.id.clear)) != null) {
-            view.setOnClickListener(mListener);
+
+        mLogic.resumeWithHistory();
+        updateDeleteMode();
+    }
+
+    private void updateDeleteMode() {
+        if (mLogic.getDeleteMode() == Logic.DELETE_MODE_BACKSPACE) {
+            mClearButton.setVisibility(View.GONE);
+            mBackspaceButton.setVisibility(View.VISIBLE);
+        } else {
+            mClearButton.setVisibility(View.VISIBLE);
+            mBackspaceButton.setVisibility(View.GONE);
         }
-        */
+    }
+
+    void setOnClickListener(View root, int id) {
+        final View target = root != null ? root.findViewById(id) : findViewById(id);
+        target.setOnClickListener(mListener);
     }
 
     @Override
     public boolean onCreateOptionsMenu(Menu menu) {
         super.onCreateOptionsMenu(menu);
-        MenuItem item;
-        
-        item = menu.add(0, CMD_CLEAR_HISTORY, 0, R.string.clear_history);
-        item.setIcon(R.drawable.clear_history);
-        
-        item = menu.add(0, CMD_ADVANCED_PANEL, 0, R.string.advanced);
-        item.setIcon(R.drawable.advanced);
-        
-        item = menu.add(0, CMD_BASIC_PANEL, 0, R.string.basic);
-        item.setIcon(R.drawable.simple);
-
+        getMenuInflater().inflate(R.menu.menu, menu);
         return true;
     }
-    
+
     @Override
     public boolean onPrepareOptionsMenu(Menu menu) {
         super.onPrepareOptionsMenu(menu);
-        menu.findItem(CMD_BASIC_PANEL).setVisible(mPanelSwitcher != null && 
-                          mPanelSwitcher.getCurrentIndex() == ADVANCED_PANEL);
-        
-        menu.findItem(CMD_ADVANCED_PANEL).setVisible(mPanelSwitcher != null && 
-                          mPanelSwitcher.getCurrentIndex() == BASIC_PANEL);
-        
+        menu.findItem(R.id.basic).setVisible(!getBasicVisibility());
+        menu.findItem(R.id.advanced).setVisible(!getAdvancedVisibility());
         return true;
+    }
+
+
+    private void createFakeMenu() {
+        mOverflowMenuButton = findViewById(R.id.overflow_menu);
+        if (mOverflowMenuButton != null) {
+            mOverflowMenuButton.setVisibility(View.VISIBLE);
+            mOverflowMenuButton.setOnClickListener(this);
+        }
+    }
+
+    @Override
+    public void onClick(View v) {
+        switch (v.getId()) {
+            case R.id.overflow_menu:
+                PopupMenu menu = constructPopupMenu();
+                if (menu != null) {
+                    menu.show();
+                }
+                break;
+        }
+    }
+
+    private PopupMenu constructPopupMenu() {
+        final PopupMenu popupMenu = new PopupMenu(this, mOverflowMenuButton);
+        final Menu menu = popupMenu.getMenu();
+        popupMenu.inflate(R.menu.menu);
+        popupMenu.setOnMenuItemClickListener(this);
+        onPrepareOptionsMenu(menu);
+        return popupMenu;
+    }
+
+
+    @Override
+    public boolean onMenuItemClick(MenuItem item) {
+        return onOptionsItemSelected(item);
+    }
+
+    private boolean getBasicVisibility() {
+        return mPager != null && mPager.getCurrentItem() == BASIC_PANEL;
+    }
+
+    private boolean getAdvancedVisibility() {
+        return mPager != null && mPager.getCurrentItem() == ADVANCED_PANEL;
     }
 
     @Override
     public boolean onOptionsItemSelected(MenuItem item) {
         switch (item.getItemId()) {
-        case CMD_CLEAR_HISTORY:
-            mHistory.clear();
-            break;
+            case R.id.clear_history:
+                mHistory.clear();
+                mLogic.onClear();
+                break;
 
-        case CMD_BASIC_PANEL:
-            if (mPanelSwitcher != null && 
-                mPanelSwitcher.getCurrentIndex() == ADVANCED_PANEL) {
-                mPanelSwitcher.moveRight();
-            }
-            break;
+            case R.id.basic:
+                if (!getBasicVisibility() && mPager != null) {
+                    mPager.setCurrentItem(BASIC_PANEL, true);
+                }
+                break;
 
-        case CMD_ADVANCED_PANEL:
-            if (mPanelSwitcher != null && 
-                mPanelSwitcher.getCurrentIndex() == BASIC_PANEL) {
-                mPanelSwitcher.moveLeft();
-            }
-            break;
+            case R.id.advanced:
+                if (!getAdvancedVisibility() && mPager != null) {
+                    mPager.setCurrentItem(ADVANCED_PANEL, true);
+                }
+                break;
         }
         return super.onOptionsItemSelected(item);
     }
@@ -141,21 +219,24 @@ public class Calculator extends Activity {
     @Override
     protected void onSaveInstanceState(Bundle state) {
         super.onSaveInstanceState(state);
-        state.putInt(STATE_CURRENT_VIEW, mPanelSwitcher.getCurrentIndex());
+        if (mPager != null) {
+            state.putInt(STATE_CURRENT_VIEW, mPager.getCurrentItem());
+        }
     }
 
     @Override
     public void onPause() {
         super.onPause();
         mLogic.updateHistory();
+        mPersist.setDeleteMode(mLogic.getDeleteMode());
         mPersist.save();
     }
 
     @Override
     public boolean onKeyDown(int keyCode, KeyEvent keyEvent) {
-        if (keyCode == KeyEvent.KEYCODE_BACK 
-            && mPanelSwitcher.getCurrentIndex() == ADVANCED_PANEL) {
-            mPanelSwitcher.moveRight();
+        if (keyCode == KeyEvent.KEYCODE_BACK && getAdvancedVisibility()
+                && mPager != null) {
+            mPager.setCurrentItem(BASIC_PANEL);
             return true;
         } else {
             return super.onKeyDown(keyCode, keyEvent);
@@ -168,16 +249,88 @@ public class Calculator extends Activity {
         }
     }
 
-    /**
-     * The font sizes in the layout files are specified for a HVGA display.
-     * Adjust the font sizes accordingly if we are running on a different
-     * display.
-     */
-    public void adjustFontSize(TextView view) {
-        float fontPixelSize = view.getTextSize();
-        Display display = getWindowManager().getDefaultDisplay();
-        int h = Math.min(display.getWidth(), display.getHeight());
-        float ratio = (float)h/HVGA_WIDTH_PIXELS;
-        view.setTextSize(TypedValue.COMPLEX_UNIT_PX, fontPixelSize*ratio);
+    @Override
+    public void onChange() {
+        invalidateOptionsMenu();
+    }
+
+    @Override
+    public void onDeleteModeChange() {
+        updateDeleteMode();
+    }
+
+    class PageAdapter extends PagerAdapter {
+        private View mSimplePage;
+        private View mAdvancedPage;
+
+        public PageAdapter(ViewPager parent) {
+            final LayoutInflater inflater = LayoutInflater.from(parent.getContext());
+            final View simplePage = inflater.inflate(R.layout.simple_pad, parent, false);
+            final View advancedPage = inflater.inflate(R.layout.advanced_pad, parent, false);
+            mSimplePage = simplePage;
+            mAdvancedPage = advancedPage;
+
+            final Resources res = getResources();
+            final TypedArray simpleButtons = res.obtainTypedArray(R.array.simple_buttons);
+            for (int i = 0; i < simpleButtons.length(); i++) {
+                setOnClickListener(simplePage, simpleButtons.getResourceId(i, 0));
+            }
+            simpleButtons.recycle();
+
+            final TypedArray advancedButtons = res.obtainTypedArray(R.array.advanced_buttons);
+            for (int i = 0; i < advancedButtons.length(); i++) {
+                setOnClickListener(advancedPage, advancedButtons.getResourceId(i, 0));
+            }
+            advancedButtons.recycle();
+
+            final View clearButton = simplePage.findViewById(R.id.clear);
+            if (clearButton != null) {
+                mClearButton = clearButton;
+            }
+
+            final View backspaceButton = simplePage.findViewById(R.id.del);
+            if (backspaceButton != null) {
+                mBackspaceButton = backspaceButton;
+            }
+        }
+
+        @Override
+        public int getCount() {
+            return 2;
+        }
+
+        @Override
+        public void startUpdate(View container) {
+        }
+
+        @Override
+        public Object instantiateItem(View container, int position) {
+            final View page = position == 0 ? mSimplePage : mAdvancedPage;
+            ((ViewGroup) container).addView(page);
+            return page;
+        }
+
+        @Override
+        public void destroyItem(View container, int position, Object object) {
+            ((ViewGroup) container).removeView((View) object);
+        }
+
+        @Override
+        public void finishUpdate(View container) {
+        }
+
+        @Override
+        public boolean isViewFromObject(View view, Object object) {
+            return view == object;
+        }
+
+        @Override
+        public Parcelable saveState() {
+            return null;
+        }
+
+        @Override
+        public void restoreState(Parcelable state, ClassLoader loader) {
+        }
     }
 }

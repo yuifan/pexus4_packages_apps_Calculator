@@ -16,22 +16,23 @@
 
 package com.android.calculator2;
 
-import android.view.View;
+import android.support.v4.view.ViewPager;
 import android.view.KeyEvent;
+import android.view.View;
 import android.widget.Button;
 
-class EventListener implements View.OnKeyListener, 
-                               View.OnClickListener, 
+class EventListener implements View.OnKeyListener,
+                               View.OnClickListener,
                                View.OnLongClickListener {
     Logic mHandler;
-    PanelSwitcher mPanelSwitcher;
-    
-    void setHandler(Logic handler, PanelSwitcher panelSwitcher) {
+    ViewPager mPager;
+
+    void setHandler(Logic handler, ViewPager pager) {
         mHandler = handler;
-        mPanelSwitcher = panelSwitcher;
+        mPager = pager;
     }
-    
-    //@Override
+
+    @Override
     public void onClick(View view) {
         int id = view.getId();
         switch (id) {
@@ -39,15 +40,13 @@ class EventListener implements View.OnKeyListener,
             mHandler.onDelete();
             break;
 
-        case R.id.equal:
-            mHandler.onEnter();
-            break;
-
-            /*
         case R.id.clear:
             mHandler.onClear();
             break;
-            */
+
+        case R.id.equal:
+            mHandler.onEnter();
+            break;
 
         default:
             if (view instanceof Button) {
@@ -57,15 +56,14 @@ class EventListener implements View.OnKeyListener,
                     text += '(';
                 }
                 mHandler.insert(text);
-                if (mPanelSwitcher != null && 
-                    mPanelSwitcher.getCurrentIndex() == Calculator.ADVANCED_PANEL) {
-                    mPanelSwitcher.moveRight();
-                }                    
+                if (mPager != null && mPager.getCurrentItem() == Calculator.ADVANCED_PANEL) {
+                    mPager.setCurrentItem(Calculator.BASIC_PANEL);
+                }
             }
         }
     }
 
-    //@Override
+    @Override
     public boolean onLongClick(View view) {
         int id = view.getId();
         if (id == R.id.del) {
@@ -74,13 +72,11 @@ class EventListener implements View.OnKeyListener,
         }
         return false;
     }
-    
-    private static final char[] EQUAL = {'='};
 
-    //@Override
+    @Override
     public boolean onKey(View view, int keyCode, KeyEvent keyEvent) {
         int action = keyEvent.getAction();
-        
+
         if (keyCode == KeyEvent.KEYCODE_DPAD_LEFT ||
             keyCode == KeyEvent.KEYCODE_DPAD_RIGHT) {
             boolean eat = mHandler.eatHorizontalMove(keyCode == KeyEvent.KEYCODE_DPAD_LEFT);
@@ -93,8 +89,8 @@ class EventListener implements View.OnKeyListener,
         }
 
         //Calculator.log("KEY " + keyCode + "; " + action);
-        
-        if (keyEvent.getMatch(EQUAL, keyEvent.getMetaState()) == '=') {
+
+        if (keyEvent.getUnicodeChar() == '=') {
             if (action == KeyEvent.ACTION_UP) {
                 mHandler.onEnter();
             }
@@ -105,10 +101,14 @@ class EventListener implements View.OnKeyListener,
             keyCode != KeyEvent.KEYCODE_DPAD_UP &&
             keyCode != KeyEvent.KEYCODE_DPAD_DOWN &&
             keyCode != KeyEvent.KEYCODE_ENTER) {
+            if (keyEvent.isPrintingKey() && action == KeyEvent.ACTION_UP) {
+                // Tell the handler that text was updated.
+                mHandler.onTextChanged();
+            }
             return false;
         }
 
-        /* 
+        /*
            We should act on KeyEvent.ACTION_DOWN, but strangely
            sometimes the DOWN event isn't received, only the UP.
            So the workaround is to act on UP...
@@ -116,17 +116,17 @@ class EventListener implements View.OnKeyListener,
          */
 
         if (action == KeyEvent.ACTION_UP) {
-            switch (keyCode) {                
+            switch (keyCode) {
             case KeyEvent.KEYCODE_ENTER:
             case KeyEvent.KEYCODE_DPAD_CENTER:
                 mHandler.onEnter();
                 break;
-                
+
             case KeyEvent.KEYCODE_DPAD_UP:
                 mHandler.onUp();
                 break;
 
-            case KeyEvent.KEYCODE_DPAD_DOWN:            
+            case KeyEvent.KEYCODE_DPAD_DOWN:
                 mHandler.onDown();
                 break;
             }
